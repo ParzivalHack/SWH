@@ -1,0 +1,51 @@
+# SecureWebHost Enterprise v3.0.1 - Requirements
+# Core web server dependencies
+aiohttp>=3.8.0,<4.0.0
+aiohttp-cors>=0.7.0
+aiohttp-session>=2.11.0
+aiofiles>=22.1.0
+
+# Security libraries
+cryptography>=3.4.8
+pyotp>=2.6.0
+bcrypt>=4.0.0
+PyJWT>=2.4.0
+user-agents>=2.2.0
+
+# System monitoring
+psutil>=5.9.0
+netifaces>=0.11.0
+
+# GUI framework
+PyQt5>=5.15.0
+PyQt5-Qt5>=5.15.0
+PyQt5-sip>=12.11.0
+pyqtgraph>=0.13.0
+
+# HTTP client for deployments
+requests>=2.28.0
+
+# Optional performance enhancement
+uvloop>=0.17.0; sys_platform != "win32"
+
+# Optional telemetry (for advanced monitoring)
+opentelemetry-api>=1.15.0
+opentelemetry-sdk>=1.15.0
+opentelemetry-exporter-otlp-proto-grpc>=1.15.0
+
+# Optional ngrok integration for public exposure
+pyngrok>=6.0.0
+
+# Additional development dependencies (optional)
+# Uncomment if you plan to modify or extend the code
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
+# black>=22.0.0
+# flake8>=5.0.0
+
+# Platform-specific notes:
+# - On Windows, uvloop is not available (handled by conditional install above)
+# - On some Linux distributions, you may need to install system packages:
+#   Ubuntu/Debian: sudo apt-get install python3-pyqt5 python3-pyqt5.qtchart
+#   CentOS/RHEL: sudo yum install python3-qt5 python3-qt5-devel
+# - For production deployments, ensure OpenSSL is updated for cryptography support
