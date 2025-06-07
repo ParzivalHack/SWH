@@ -3400,7 +3400,6 @@ class EnterpriseSecureWebServer:
         self.logger.info(f"SecureWebHost v{VERSION} started on {protocol}://{self.host}:{self.port}")
         print(f"🔒 SecureWebHost v{VERSION} running on {protocol}://{self.host}:{self.port}")
         print(f"📁 Serving files from: {self.root_dir}")
-        print(f"💼 Professional Enterprise GUI")
         
         if self.config.enable_honeypot:
             print(f"🍯 Honeypot active on {len(self.honeypot_manager.get_paths())} paths")
@@ -3836,7 +3835,7 @@ async def main():
     parser.add_argument('--no-https', action='store_true', help='Disable HTTPS')
     parser.add_argument('--no-waf', action='store_true', help='Disable WAF')
     parser.add_argument('--expose', action='store_true', help='Expose server publicly with NGROK (testing only)')
-    parser.add_argument('--domain', help='Custom domain for public exposure')
+    parser.add_argument('--domain', help='Custom domain for public exposure (Alpha - Not stable)')
     
     args = parser.parse_args()
     
@@ -4586,7 +4585,7 @@ if __name__ == "__main__":
             server_thread = threading.Thread(target=server_thread_runner, daemon=True)
             server_thread.start()
             
-            print("💼 Fixed Professional Enterprise GUI launched with REAL metrics!")
+            print("💼 Professional Enterprise GUI launched with Real-Time metrics!")
             print("🛡️ Enterprise-grade security monitoring active!")
             print("📊 Real-time performance analytics enabled!")
             print("✨ All functionality now working properly!")
