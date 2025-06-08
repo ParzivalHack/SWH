@@ -35,6 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, parse_qs
 from enum import Enum, auto
 
+
 # Core server imports
 import asyncio
 import aiofiles
@@ -93,6 +94,69 @@ try:
     HAS_OTEL = True
 except ImportError:
     HAS_OTEL = False
+    from PyQt5.QtCore import pyqtSignal
+
+class DeploymentWorker(QThread):
+    """Worker thread for deployment operations"""
+    progress_updated = pyqtSignal(int, str)  # progress value, message
+    deployment_completed = pyqtSignal(bool, str, object)  # success, message, deployment object
+    
+    def __init__(self, deployment_manager, config, files):
+        super().__init__()
+        self.deployment_manager = deployment_manager
+        self.config = config
+        self.files = files
+        self.should_stop = False
+    
+    def run(self):
+        """Run deployment in background thread"""
+        try:
+            # Update progress - Building
+            self.progress_updated.emit(20, "Building project...")
+            self.msleep(1000)
+            
+            if self.should_stop:
+                return
+            
+            # Update progress - Uploading
+            self.progress_updated.emit(50, "Uploading files...")
+            
+            # Choose deployment method based on provider
+            if self.config.provider == "vercel":
+                deployment = asyncio.run(self.deployment_manager.deploy_to_vercel(self.config, self.files))
+            elif self.config.provider == "netlify":
+                deployment = asyncio.run(self.deployment_manager.deploy_to_netlify(self.config, self.files))
+            elif self.config.provider == "github_pages":
+                deployment = asyncio.run(self.deployment_manager.deploy_to_github_pages(self.config, self.files))
+            else:
+                raise ValueError(f"Unsupported provider: {self.config.provider}")
+            
+            if self.should_stop:
+                return
+            
+            # Update progress - Finalizing
+            self.progress_updated.emit(90, "Finalizing deployment...")
+            self.msleep(1000)
+            
+            # Update progress - Complete
+            self.progress_updated.emit(100, "Deployment complete!")
+            
+            # Emit completion signal
+            if deployment.status == DeploymentStatus.SUCCESS:
+                message = f"🎉 Successfully deployed to {deployment.url}\n\n" \
+                         f"Platform: {self.config.provider.title()}\n" \
+                         f"Files deployed: {len(self.files)}\n" \
+                         f"Deployment ID: {deployment.id}"
+                self.deployment_completed.emit(True, message, deployment)
+            else:
+                self.deployment_completed.emit(False, f"Deployment failed: {deployment.error_message}", deployment)
+                
+        except Exception as e:
+            self.deployment_completed.emit(False, f"Deployment failed: {str(e)}", None)
+    
+    def stop(self):
+        """Stop the deployment"""
+        self.should_stop = True
 
 # Constants
 VERSION = "3.0.1"
@@ -779,7 +843,7 @@ class ProductionDeploymentManager:
         return deployment
     
     async def deploy_to_github_pages(self, config: DeploymentConfig, files: Dict[str, str]) -> Deployment:
-        """Deploy to GitHub Pages using REAL GitHub API"""
+        """Deploy to GitHub Pages using REAL GitHub API with better error handling"""
         deployment = Deployment(
             id=str(uuid.uuid4())[:8],
             config=config,
@@ -789,63 +853,277 @@ class ProductionDeploymentManager:
         try:
             deployment.status = DeploymentStatus.BUILDING
             
-            if config.api_key and config.repo_url:
-                # Parse repository URL
-                repo_parts = config.repo_url.replace("https://github.com/", "").split("/")
-                if len(repo_parts) >= 2:
-                    owner = repo_parts[0]
-                    repo = repo_parts[1].replace(".git", "")
-                    
-                    headers = {
-                        "Authorization": f"token {config.api_key}",
-                        "Accept": "application/vnd.github.v3+json",
-                        "User-Agent": "SecureWebHost-Enterprise"
-                    }
-                    
-                    deployment.status = DeploymentStatus.DEPLOYING
-                    
-                    # Create or update files in repository
-                    for file_path, content in files.items():
-                        if isinstance(content, str):
-                            content_b64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
-                        else:
-                            content_b64 = base64.b64encode(content).decode('utf-8')
-                        
-                        # GitHub API to create/update file
-                        file_data = {
-                            "message": f"Deploy: Update {file_path}",
-                            "content": content_b64,
-                            "branch": "gh-pages"
-                        }
-                        
-                        response = requests.put(
-                            f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}",
-                            headers=headers,
-                            json=file_data,
-                            timeout=30
-                        )
-                        
-                        if response.status_code not in [200, 201]:
-                            deployment.status = DeploymentStatus.FAILED
-                            deployment.error_message = f"GitHub API error: {response.status_code}"
-                            break
-                    
-                    if deployment.status != DeploymentStatus.FAILED:
-                        deployment.status = DeploymentStatus.SUCCESS
-                        deployment.url = f"https://{owner}.github.io/{repo}"
-                        deployment.deployed_at = datetime.now()
-                else:
-                    deployment.status = DeploymentStatus.FAILED
-                    deployment.error_message = "Invalid repository URL format"
-            else:
-                # Demo mode
-                deployment.status = DeploymentStatus.SUCCESS
-                deployment.url = f"https://{config.project_name}-demo.github.io"
-                deployment.deployed_at = datetime.now()
+            if not config.api_key:
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = "GitHub Personal Access Token is required"
+                self.deployments[deployment.id] = deployment
+                return deployment
+            
+            if not config.repo_url:
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = "Repository URL is required"
+                self.deployments[deployment.id] = deployment
+                return deployment
+            
+            # Parse repository URL more robustly
+            repo_url = config.repo_url.strip()
+            if repo_url.endswith('.git'):
+                repo_url = repo_url[:-4]
+            
+            # Extract owner and repo from various URL formats
+            import re
+            patterns = [
+                r'github\.com[:/]([^/]+)/([^/\s]+)',
+                r'([^/]+)/([^/\s]+)$'
+            ]
+            
+            owner = None
+            repo = None
+            for pattern in patterns:
+                match = re.search(pattern, repo_url)
+                if match:
+                    owner = match.group(1)
+                    repo = match.group(2)
+                    break
+            
+            if not owner or not repo:
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = f"Invalid repository URL format: {config.repo_url}"
+                self.deployments[deployment.id] = deployment
+                return deployment
+            
+            headers = {
+                "Authorization": f"token {config.api_key}",
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "SecureWebHost-Enterprise"
+            }
+            
+            deployment.status = DeploymentStatus.DEPLOYING
+            deployment.build_logs.append(f"Deploying to repository: {owner}/{repo}")
+            
+            # Step 1: Check if repository exists and we have access
+            repo_check_response = requests.get(
+                f"https://api.github.com/repos/{owner}/{repo}",
+                headers=headers,
+                timeout=10
+            )
+            
+            if repo_check_response.status_code == 404:
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = f"Repository not found: {owner}/{repo}"
+                self.deployments[deployment.id] = deployment
+                return deployment
+            elif repo_check_response.status_code == 403:
+                error_data = repo_check_response.json()
+                error_msg = error_data.get('message', 'Access forbidden')
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = f"GitHub API access denied: {error_msg}\n\nMake sure your token has 'repo' scope"
+                self.deployments[deployment.id] = deployment
+                return deployment
+            elif repo_check_response.status_code == 401:
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = "Invalid GitHub token. Please check your Personal Access Token"
+                self.deployments[deployment.id] = deployment
+                return deployment
+            elif repo_check_response.status_code != 200:
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = f"Failed to access repository: HTTP {repo_check_response.status_code}"
+                self.deployments[deployment.id] = deployment
+                return deployment
+            
+            deployment.build_logs.append("✓ Repository access confirmed")
+            
+            # Step 2: Check if gh-pages branch exists
+            branch_response = requests.get(
+                f"https://api.github.com/repos/{owner}/{repo}/branches/gh-pages",
+                headers=headers,
+                timeout=10
+            )
+            
+            if branch_response.status_code == 404:
+                # Create gh-pages branch
+                deployment.build_logs.append("Creating gh-pages branch...")
                 
+                # Get default branch
+                default_branch = repo_check_response.json().get('default_branch', 'main')
+                
+                # Get the SHA of the default branch
+                ref_response = requests.get(
+                    f"https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{default_branch}",
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if ref_response.status_code == 200:
+                    sha = ref_response.json()['object']['sha']
+                    
+                    # Create gh-pages branch
+                    create_branch_response = requests.post(
+                        f"https://api.github.com/repos/{owner}/{repo}/git/refs",
+                        headers=headers,
+                        json={
+                            "ref": "refs/heads/gh-pages",
+                            "sha": sha
+                        },
+                        timeout=10
+                    )
+                    
+                    if create_branch_response.status_code == 201:
+                        deployment.build_logs.append("✓ Created gh-pages branch")
+                    else:
+                        deployment.build_logs.append("⚠ Could not create gh-pages branch, continuing anyway...")
+            else:
+                deployment.build_logs.append("✓ gh-pages branch exists")
+            
+            # Step 3: Deploy files
+            deployment.build_logs.append(f"Deploying {len(files)} files...")
+            
+            # For GitHub Pages, we need to commit all files in a single commit
+            # First, get the current tree
+            tree_response = requests.get(
+                f"https://api.github.com/repos/{owner}/{repo}/git/trees/gh-pages",
+                headers=headers,
+                timeout=10
+            )
+            
+            base_tree = tree_response.json().get('sha') if tree_response.status_code == 200 else None
+            
+            # Create blobs for each file
+            tree = []
+            for file_path, content in files.items():
+                if isinstance(content, str):
+                    content_b64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+                else:
+                    content_b64 = base64.b64encode(content).decode('utf-8')
+                
+                # Create blob
+                blob_response = requests.post(
+                    f"https://api.github.com/repos/{owner}/{repo}/git/blobs",
+                    headers=headers,
+                    json={
+                        "content": content_b64,
+                        "encoding": "base64"
+                    },
+                    timeout=10
+                )
+                
+                if blob_response.status_code == 201:
+                    blob_sha = blob_response.json()['sha']
+                    tree.append({
+                        "path": file_path,
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": blob_sha
+                    })
+                else:
+                    deployment.build_logs.append(f"⚠ Failed to create blob for {file_path}")
+            
+            if not tree:
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = "Failed to create any file blobs"
+                self.deployments[deployment.id] = deployment
+                return deployment
+            
+            # Create tree
+            tree_data = {"tree": tree}
+            if base_tree:
+                tree_data["base_tree"] = base_tree
+            
+            tree_response = requests.post(
+                f"https://api.github.com/repos/{owner}/{repo}/git/trees",
+                headers=headers,
+                json=tree_data,
+                timeout=30
+            )
+            
+            if tree_response.status_code != 201:
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = f"Failed to create tree: {tree_response.text}"
+                self.deployments[deployment.id] = deployment
+                return deployment
+            
+            tree_sha = tree_response.json()['sha']
+            
+            # Get parent commit
+            parent_response = requests.get(
+                f"https://api.github.com/repos/{owner}/{repo}/git/refs/heads/gh-pages",
+                headers=headers,
+                timeout=10
+            )
+            
+            parent_sha = None
+            if parent_response.status_code == 200:
+                parent_sha = parent_response.json()['object']['sha']
+            
+            # Create commit
+            commit_data = {
+                "message": f"Deploy from SecureWebHost: {len(files)} files",
+                "tree": tree_sha
+            }
+            if parent_sha:
+                commit_data["parents"] = [parent_sha]
+            
+            commit_response = requests.post(
+                f"https://api.github.com/repos/{owner}/{repo}/git/commits",
+                headers=headers,
+                json=commit_data,
+                timeout=10
+            )
+            
+            if commit_response.status_code != 201:
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = f"Failed to create commit: {commit_response.text}"
+                self.deployments[deployment.id] = deployment
+                return deployment
+            
+            commit_sha = commit_response.json()['sha']
+            
+            # Update reference
+            ref_update_response = requests.patch(
+                f"https://api.github.com/repos/{owner}/{repo}/git/refs/heads/gh-pages",
+                headers=headers,
+                json={"sha": commit_sha},
+                timeout=10
+            )
+            
+            if ref_update_response.status_code == 200:
+                deployment.status = DeploymentStatus.SUCCESS
+                deployment.url = f"https://{owner}.github.io/{repo}"
+                deployment.deployed_at = datetime.now()
+                deployment.build_logs.append(f"✓ Deployment successful!")
+                deployment.build_logs.append(f"✓ Your site will be available at: {deployment.url}")
+                deployment.build_logs.append("ℹ Note: It may take a few minutes for GitHub Pages to update")
+                
+                # Enable GitHub Pages if not already enabled
+                pages_response = requests.put(
+                    f"https://api.github.com/repos/{owner}/{repo}/pages",
+                    headers=headers,
+                    json={
+                        "source": {
+                            "branch": "gh-pages",
+                            "path": "/"
+                        }
+                    },
+                    timeout=10
+                )
+                
+                if pages_response.status_code in [201, 204]:
+                    deployment.build_logs.append("✓ GitHub Pages enabled")
+            else:
+                deployment.status = DeploymentStatus.FAILED
+                deployment.error_message = f"Failed to update branch: {ref_update_response.text}"
+            
+        except requests.exceptions.Timeout:
+            deployment.status = DeploymentStatus.FAILED
+            deployment.error_message = "GitHub API request timed out"
+        except requests.exceptions.ConnectionError:
+            deployment.status = DeploymentStatus.FAILED
+            deployment.error_message = "Failed to connect to GitHub API"
         except Exception as e:
             deployment.status = DeploymentStatus.FAILED
-            deployment.error_message = str(e)
+            deployment.error_message = f"Unexpected error: {str(e)}"
+            import traceback
+            deployment.build_logs.append(f"Error details: {traceback.format_exc()}")
         
         self.deployments[deployment.id] = deployment
         return deployment
@@ -1250,7 +1528,7 @@ Files:
         self.show_message_box("Deployment Preview", preview_text)
     
     def deploy_to_production(self):
-        """Deploy to production platform"""
+        """Deploy to production platform - FIXED VERSION"""
         config = self._get_deployment_config()
         
         if not self._validate_deployment_config(config):
@@ -1262,16 +1540,55 @@ Files:
             self.show_message_box("No Files", "No files selected for deployment", QtWidgets.QMessageBox.Warning)
             return
         
-        # Show deployment dialog
-        self._show_deployment_progress()
+        # Create deployment worker
+        self.deployment_worker = DeploymentWorker(self.deployment_manager, config, files)
+        self.deployment_worker.progress_updated.connect(self.update_deployment_progress)
+        self.deployment_worker.deployment_completed.connect(self.deployment_completed)
         
-        # Start deployment in background
-        deployment_thread = threading.Thread(
-            target=self._deploy_async,
-            args=(config, files),
-            daemon=True
+        # Show deployment dialog
+        self.deployment_progress = QtWidgets.QProgressDialog(
+            "Preparing deployment...", "Cancel", 0, 100, self
         )
-        deployment_thread.start()
+        self.deployment_progress.setWindowTitle("Deploying to Production")
+        self.deployment_progress.setWindowModality(Qt.WindowModal)
+        self.deployment_progress.canceled.connect(self.cancel_deployment)
+        self.deployment_progress.show()
+        
+        # Start deployment
+        self.deployment_worker.start()
+
+    def update_deployment_progress(self, value, message):
+        """Update deployment progress - runs on GUI thread"""
+        if hasattr(self, 'deployment_progress') and self.deployment_progress:
+            self.deployment_progress.setValue(value)
+            self.deployment_progress.setLabelText(message)
+
+    def deployment_completed(self, success, message, deployment):
+        """Handle deployment completion - runs on GUI thread"""
+        # Close progress dialog
+        if hasattr(self, 'deployment_progress') and self.deployment_progress:
+            self.deployment_progress.close()
+            self.deployment_progress = None
+        
+        # Show result
+        if success:
+            self.show_message_box("Deployment Successful", message)
+            # Update deployment history
+            if deployment:
+                self._add_deployment_to_history(deployment)
+            # Update deployment logs if needed
+            if hasattr(self, 'deployment_logs'):
+                self.deployment_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+        else:
+            self.show_message_box("Deployment Failed", message, QtWidgets.QMessageBox.Critical)
+
+    def cancel_deployment(self):
+        """Cancel ongoing deployment"""
+        if hasattr(self, 'deployment_worker') and self.deployment_worker:
+            self.deployment_worker.stop()
+            if hasattr(self, 'deployment_progress') and self.deployment_progress:
+                self.deployment_progress.close()
+                self.deployment_progress = None
     
     def _get_deployment_config(self) -> DeploymentConfig:
         """Get deployment configuration from UI"""
@@ -1314,55 +1631,7 @@ Files:
         self.deployment_progress.setWindowModality(Qt.WindowModal)
         self.deployment_progress.show()
     
-    def _deploy_async(self, config: DeploymentConfig, files: Dict[str, str]):
-        """Deploy asynchronously"""
-        try:
-            # Update progress
-            self.deployment_progress.setLabelText("Building project...")
-            self.deployment_progress.setValue(20)
-            time.sleep(1)
-            
-            self.deployment_progress.setLabelText("Uploading files...")
-            self.deployment_progress.setValue(50)
-            
-            # Choose deployment method based on provider
-            if config.provider == "vercel":
-                deployment = asyncio.run(self.deployment_manager.deploy_to_vercel(config, files))
-            elif config.provider == "netlify":
-                deployment = asyncio.run(self.deployment_manager.deploy_to_netlify(config, files))
-            elif config.provider == "github_pages":
-                deployment = asyncio.run(self.deployment_manager.deploy_to_github_pages(config, files))
-            else:
-                raise ValueError(f"Unsupported provider: {config.provider}")
-            
-            self.deployment_progress.setLabelText("Finalizing deployment...")
-            self.deployment_progress.setValue(90)
-            time.sleep(1)
-            
-            self.deployment_progress.setValue(100)
-            self.deployment_progress.close()
-            
-            # Show result
-            if deployment.status == DeploymentStatus.SUCCESS:
-                self.show_message_box(
-                    "Deployment Successful",
-                    f"🎉 Successfully deployed to {deployment.url}\n\n"
-                    f"Platform: {config.provider.title()}\n"
-                    f"Files deployed: {len(files)}\n"
-                    f"Deployment ID: {deployment.id}"
-                )
-                # Update deployment history
-                self._add_deployment_to_history(deployment)
-            else:
-                self.show_message_box(
-                    "Deployment Failed", 
-                    f"Deployment failed: {deployment.error_message}",
-                    QtWidgets.QMessageBox.Critical
-                )
-            
-        except Exception as e:
-            self.deployment_progress.close()
-            self.show_message_box("Deployment Failed", f"Deployment failed: {str(e)}", QtWidgets.QMessageBox.Critical)
+    ###
     
     def _add_deployment_to_history(self, deployment: Deployment):
         """Add deployment to history table"""
@@ -1397,6 +1666,194 @@ Files:
         actions_layout.addWidget(visit_btn)
         
         self.deployment_table.setCellWidget(row, 5, actions_widget)
+
+    def init_ui(self):
+        """Initialize the professional enterprise GUI"""
+        self.setWindowTitle(f"SecureWebHost Enterprise v{VERSION} - Secure Hosting, Made Easy!")
+        self.setGeometry(100, 100, 1900, 1200)
+        
+        # Professional enterprise theme
+        self.setStyleSheet("""
+            QMainWindow { 
+                background-color: #ffffff; 
+                color: #2d2d2d;
+            }
+            QTabWidget::pane { 
+                border: 2px solid #8b5cf6; 
+                background-color: #ffffff; 
+                border-radius: 8px; 
+            }
+            QTabBar::tab { 
+                background-color: #f8fafc; 
+                color: #374151; 
+                padding: 14px 30px; 
+                margin-right: 2px;
+                border-radius: 8px 8px 0 0;
+                font-weight: 600;
+                font-size: 13px;
+                min-width: 120px;
+            }
+            QTabBar::tab:selected { 
+                background-color: #8b5cf6; 
+                color: white;
+            }
+            QTabBar::tab:hover:!selected { 
+                background-color: #e5e7eb; 
+            }
+            QLabel { 
+                color: #2d2d2d; 
+            }
+            QGroupBox { 
+                color: #2d2d2d; 
+                border: 2px solid #d1d5db; 
+                border-radius: 10px; 
+                margin-top: 15px; 
+                padding-top: 15px;
+                font-weight: 600;
+                background-color: #ffffff;
+            }
+            QGroupBox::title { 
+                subcontrol-origin: margin; 
+                left: 15px; 
+                padding: 0 10px 0 10px;
+                font-size: 14px;
+                font-weight: 700;
+                color: #8b5cf6;
+            }
+            QPushButton { 
+                background-color: #8b5cf6;
+                color: white; 
+                border: none; 
+                padding: 12px 24px; 
+                border-radius: 8px; 
+                font-weight: 700;
+                font-size: 13px;
+            }
+            QPushButton:hover { 
+                background-color: #7c3aed;
+            }
+            QPushButton:pressed { 
+                background-color: #6d28d9;
+            }
+            QPushButton.success { 
+                background-color: #8b5cf6;
+            }
+            QPushButton.success:hover { 
+                background-color: #7c3aed;
+            }
+            QPushButton.danger { 
+                background-color: #ec4899;
+            }
+            QPushButton.danger:hover { 
+                background-color: #db2777;
+            }
+            QPushButton.warning { 
+                background-color: #d946ef;
+            }
+            QPushButton.warning:hover { 
+                background-color: #c026d3;
+            }
+            QTableWidget { 
+                background-color: #ffffff; 
+                color: #2d2d2d; 
+                gridline-color: #d1d5db; 
+                alternate-background-color: #f8fafc;
+                border: 2px solid #e5e7eb;
+                border-radius: 8px;
+            }
+            QHeaderView::section { 
+                background-color: #8b5cf6; 
+                color: white; 
+                padding: 12px; 
+                border: none; 
+                font-weight: 700;
+                font-size: 13px;
+            }
+            QLineEdit, QComboBox, QSpinBox, QTextEdit { 
+                background-color: #ffffff; 
+                color: #2d2d2d; 
+                border: 2px solid #d1d5db; 
+                padding: 10px; 
+                border-radius: 6px;
+                font-size: 13px;
+            }
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QTextEdit:focus {
+                border-color: #8b5cf6;
+            }
+            QCheckBox { 
+                color: #2d2d2d;
+                font-weight: 600;
+            }
+            QListWidget { 
+                background-color: #ffffff; 
+                color: #2d2d2d; 
+                border: 2px solid #e5e7eb;
+                border-radius: 8px;
+            }
+            QProgressBar {
+                border: 2px solid #d1d5db;
+                border-radius: 8px;
+                text-align: center;
+                font-weight: 700;
+                color: #2d2d2d;
+                background-color: #f8fafc;
+            }
+            QProgressBar::chunk {
+                background-color: #8b5cf6;
+                border-radius: 6px;
+            }
+            QTreeWidget {
+                background-color: #ffffff;
+                color: #2d2d2d;
+                border: 2px solid #e5e7eb;
+                border-radius: 8px;
+            }
+        """)
+        
+        central = QtWidgets.QWidget()
+        self.setCentralWidget(central)
+        layout = QtWidgets.QVBoxLayout(central)
+        
+        self.tabs = QtWidgets.QTabWidget()
+        layout.addWidget(self.tabs)
+        
+        # Professional tabs
+        self.tabs.addTab(self._create_dashboard_tab(), "📊 Command Center Dashboard")
+        self.tabs.addTab(self._create_file_management_tab(), "📁 File Management System")
+        self.tabs.addTab(self._create_production_deployment_tab(), "🚀 Production Deployment")
+        self.tabs.addTab(self._create_performance_analytics_tab(), "📈 Performance Analytics")
+        self.tabs.addTab(self._create_security_tab(), "🛡️ Security Management Center")
+        self.tabs.addTab(self._create_incident_tab(), "🚨 Incident Response Center")
+        self.tabs.addTab(self._create_honeypot_tab(), "🍯 Honeypot Management")
+        self.tabs.addTab(self._create_ip_management_tab(), "🚫 IP Address Management")
+        self.tabs.addTab(self._create_waf_tab(), "🔍 WAF Rule Management")
+        
+        # Professional status bar
+        self.status_bar = QtWidgets.QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_bar.setStyleSheet("""
+            QStatusBar { 
+                color: #2d2d2d; 
+                background-color: #f8fafc; 
+                border-top: 2px solid #e5e7eb;
+                font-weight: 600;
+            }
+        """)
+        self.status_bar.showMessage("🔒 SecureWebHost Enterprise - All Systems Operational")
+
+    def init_timers(self):
+        """Initialize update timers with real metrics integration"""
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_real_time_data)
+        self.update_timer.start(1000)  # Update every second
+        
+        self.slow_timer = QTimer()
+        self.slow_timer.timeout.connect(self.update_slow_data)
+        self.slow_timer.start(5000)  # Update every 5 seconds
+        
+        # Initialize security displays
+        self.refresh_security_displays()
+        self.refresh_honeypot_display()
     
     def _open_deployment_url(self, url: str):
         """Open deployment URL in browser"""
@@ -1943,6 +2400,55 @@ Files:
                 resolve_btn = QtWidgets.QPushButton("✅ Resolve")
                 resolve_btn.clicked.connect(lambda checked, inc_id=incident.id: self.resolve_incident(inc_id))
                 self.incidents_table.setCellWidget(i, 6, resolve_btn)
+
+    def update_waf_test_progress(self, category, payload, blocked, details):
+        """Update WAF test progress"""
+        if hasattr(self, 'waf_test_progress'):
+            status = "BLOCKED" if blocked else "ALLOWED"
+            message = f"Testing {category}: {status}\n{payload[:50]}..."
+            
+            # Update progress (estimate based on current test)
+            current_value = self.waf_test_progress.value()
+            self.waf_test_progress.setValue(min(95, current_value + 3))
+            self.waf_test_progress.setLabelText(message)
+
+    def waf_test_completed(self, results):
+        """Handle WAF test completion"""
+        if hasattr(self, 'waf_test_progress'):
+            self.waf_test_progress.setValue(100)
+            self.waf_test_progress.close()
+        
+        # Show detailed results dialog
+        results_dialog = WAFTestResultsDialog(results, self)
+        results_dialog.exec()
+        
+        # Update WAF statistics display
+        self.update_slow_data()
+        
+        # Show summary message
+        blocked = results['blocked']
+        total = results['total_tests']
+        success_rate = (blocked / total * 100) if total > 0 else 0
+        
+        if success_rate >= 90:
+            icon = QtWidgets.QMessageBox.Information
+            title = "WAF Test: Excellent Protection"
+            message = f"🛡️ WAF performed excellently!\n\n✅ Blocked: {blocked}/{total} attacks ({success_rate:.1f}%)\n\nYour WAF rules are providing strong protection against common attacks."
+        elif success_rate >= 70:
+            icon = QtWidgets.QMessageBox.Warning
+            title = "WAF Test: Good Protection"
+            message = f"🟡 WAF performed well but could be improved.\n\n⚠️  Blocked: {blocked}/{total} attacks ({success_rate:.1f}%)\n\nConsider reviewing and updating WAF rules for better protection."
+        else:
+            icon = QtWidgets.QMessageBox.Critical
+            title = "WAF Test: Needs Improvement"
+            message = f"🔴 WAF needs significant improvement!\n\n❌ Blocked: {blocked}/{total} attacks ({success_rate:.1f}%)\n\nUrgently review WAF configuration and rules."
+        
+        self.show_message_box(title, message, icon)
+
+    def cancel_waf_test(self):
+        """Cancel WAF test"""
+        if hasattr(self, 'waf_test_worker'):
+            self.waf_test_worker.stop()
     
     def manual_block_ip_direct(self, ip: str):
         """Block IP directly from security events"""
@@ -1960,227 +2466,151 @@ Files:
         
         self.show_message_box("Incident Resolved", f"Incident {incident_id} has been resolved")
         self.refresh_security_displays()
-    
+
     def test_waf_rules(self):
-        """Test WAF rules"""
-        self.show_message_box("WAF Test", "WAF rules tested successfully! All protections active.")
+        """Test WAF rules with real attack payloads"""
+        reply = QtWidgets.QMessageBox.question(
+            self, "WAF Rule Test", 
+            "This will test WAF rules against real attack payloads.\n\n"
+            "The test will simulate SQL injection, XSS, path traversal, and other attacks.\n"
+            "This is safe and will only test the detection capabilities.\n\n"
+            "Continue with WAF testing?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+        )
+        
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        
+        # Create WAF test worker
+        self.waf_test_worker = WAFTestWorker(self.security_manager)
+        self.waf_test_worker.test_updated.connect(self.update_waf_test_progress)
+        self.waf_test_worker.test_completed.connect(self.waf_test_completed)
+        
+        # Show progress dialog
+        self.waf_test_progress = QtWidgets.QProgressDialog("Initializing WAF tests...", "Cancel", 0, 100, self)
+        self.waf_test_progress.setWindowTitle("WAF Rule Testing")
+        self.waf_test_progress.setWindowModality(Qt.WindowModal)
+        self.waf_test_progress.canceled.connect(self.cancel_waf_test)
+        self.waf_test_progress.show()
+        
+        # Start the test
+        self.waf_test_worker.start()
     
-    def update_threat_intelligence(self):
-        """Update threat intelligence feeds"""
-        progress = QtWidgets.QProgressDialog("Updating threat intelligence...", None, 0, 100, self)
-        progress.setWindowTitle("Intelligence Update")
-        progress.setWindowModality(Qt.WindowModal)
+    class WAFTestWorker(QThread):
+        """Worker thread for WAF rule testing"""
+        test_updated = pyqtSignal(str, str, bool, str)  # rule_type, payload, blocked, details
+        test_completed = pyqtSignal(dict)  # final results
         
-        for i in range(101):
-            progress.setValue(i)
-            time.sleep(0.02)
+        def __init__(self, security_manager):
+            super().__init__()
+            self.security_manager = security_manager
+            self.should_stop = False
         
-        progress.close()
-        self.show_message_box("Update Complete", "Threat intelligence feeds updated successfully!")
-
-    # Helper methods
-    def _create_metric_card(self, name, value, color, description):
-        """Create a professional metric card with squared rounded corners"""
-        widget = QtWidgets.QFrame()
-        
-        # Professional color scheme
-        professional_colors = {
-            "#ef4444": "#ec4899",  # Pink shade
-            "#f59e0b": "#d946ef",  # Purple shade
-            "#10b981": "#8b5cf6",  # Purple
-            "#0ea5e9": "#a855f7",  # Light purple
-            "#8b5cf6": "#8b5cf6",  # Purple
-            "#14b8a6": "#c084fc",  # Light purple
-            "#dc2626": "#ec4899",  # Pink
-            "#34d399": "#a855f7",  # Light purple
-        }
-        
-        final_color = professional_colors.get(color, color)
-        
-        widget.setStyleSheet(f"""
-            QFrame {{
-                background-color: #ffffff;
-                border: 2px solid {final_color};
-                border-radius: 12px;
-                padding: 20px;
-                margin: 8px;
-            }}
-            QFrame:hover {{
-                border-color: #7c3aed;
-                background-color: #f8fafc;
-            }}
-        """)
-        widget.setToolTip(description)
-        
-        layout = QtWidgets.QVBoxLayout(widget)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # Value with professional styling
-        value_label = QtWidgets.QLabel(value)
-        value_label.setStyleSheet(f"""
-            font-size: 28px; 
-            font-weight: 800; 
-            color: {final_color};
-            margin-bottom: 8px;
-        """)
-        value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(value_label)
-        
-        # Name label
-        name_label = QtWidgets.QLabel(name)
-        name_label.setStyleSheet("font-size: 12px; color: #374151; font-weight: 600;")
-        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(name_label)
-        
-        widget.value_label = value_label
-        return widget
-
-    def _create_security_indicator(self, name, status, color, description):
-        """Create professional security status indicator"""
-        widget = QtWidgets.QFrame()
-        
-        professional_colors = {
-            "#10b981": "#8b5cf6",  # Purple
-            "#f59e0b": "#d946ef",  # Purple shade
-            "#ef4444": "#ec4899",  # Pink
-            "#0ea5e9": "#a855f7",  # Light purple
-        }
-        
-        final_color = professional_colors.get(color, color)
-        
-        widget.setStyleSheet(f"""
-            QFrame {{
-                background-color: #ffffff;
-                border: 2px solid {final_color};
-                border-radius: 10px;
-                padding: 15px;
-                margin: 5px;
-            }}
-            QFrame:hover {{
-                background-color: #f8fafc;
-            }}
-        """)
-        widget.setToolTip(description)
-        
-        layout = QtWidgets.QVBoxLayout(widget)
-        
-        name_label = QtWidgets.QLabel(name)
-        name_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #2d2d2d;")
-        layout.addWidget(name_label)
-        
-        status_label = QtWidgets.QLabel(status)
-        status_label.setStyleSheet(f"font-size: 14px; font-weight: 800; color: {final_color};")
-        layout.addWidget(status_label)
-        
-        widget.status_label = status_label
-        return widget
-
-    def _populate_file_tree(self, items, parent=None):
-        """Populate file tree widget"""
-        if parent is None:
-            parent = self.file_tree.invisibleRootItem()
-        
-        for item in items:
-            tree_item = QtWidgets.QTreeWidgetItem(parent)
-            tree_item.setText(0, item['name'])
+        def run(self):
+            """Run WAF rule tests"""
+            test_payloads = {
+                'sql_injection': [
+                    "'; DROP TABLE users; --",
+                    "1' OR '1'='1",
+                    "UNION SELECT * FROM users",
+                    "'; EXEC xp_cmdshell('cmd'); --",
+                    "1' AND SLEEP(5) --",
+                    "' OR 1=1 LIMIT 1 --"
+                ],
+                'xss': [
+                    "<script>alert('XSS')</script>",
+                    "<img src=x onerror=alert('XSS')>",
+                    "javascript:alert('XSS')",
+                    "<svg onload=alert('XSS')>",
+                    "<iframe src=javascript:alert('XSS')>",
+                    "eval('alert(\"XSS\")')"
+                ],
+                'path_traversal': [
+                    "../../../etc/passwd",
+                    "..\\..\\windows\\system32",
+                    "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+                    "....//....//....//etc/passwd",
+                    "../../../../../../../etc/shadow",
+                    "..\\..\\..\\boot.ini"
+                ],
+                'command_injection': [
+                    "; ls -la",
+                    "| whoami",
+                    "&& dir",
+                    "`cat /etc/passwd`",
+                    "$(id)",
+                    "; rm -rf /"
+                ]
+            }
             
-            if item['type'] == 'file':
-                tree_item.setText(1, f"{item['size']:,} bytes")
-                tree_item.setText(2, item['modified'].strftime('%Y-%m-%d %H:%M'))
-                
-                # Include/exclude checkbox
-                checkbox = QtWidgets.QCheckBox()
-                checkbox.setChecked(item['included'])
-                checkbox.stateChanged.connect(lambda state, path=item['path']: 
-                    self.file_manager.include_file(path) if state else self.file_manager.exclude_file(path))
-                self.file_tree.setItemWidget(tree_item, 3, checkbox)
-                
-                # Set icon based on file type
-                if item['extension'] in ['.html', '.css', '.js']:
-                    tree_item.setIcon(0, self.style().standardIcon(QStyle.SP_FileIcon))
-                elif item['extension'] in ['.jpg', '.png', '.gif']:
-                    tree_item.setIcon(0, self.style().standardIcon(QStyle.SP_DesktopIcon))
-            else:
-                tree_item.setIcon(0, self.style().standardIcon(QStyle.SP_DirIcon))
-                if 'children' in item:
-                    self._populate_file_tree(item['children'], tree_item)
-
-    def _update_file_statistics(self):
-        """Update file statistics"""
-        file_data = self.file_manager.scan_directory()
-        stats = self._calculate_file_stats(file_data['items'])
-        
-        if hasattr(self, 'file_stats'):
-            self.file_stats["Total Files"].value_label.setText(str(stats['total_files']))
-            self.file_stats["Included Files"].value_label.setText(str(stats['included_files']))
-            self.file_stats["Total Size"].value_label.setText(f"{stats['total_size']:,} B")
-            self.file_stats["Web Files"].value_label.setText(str(stats['web_files']))
-            self.file_stats["Images"].value_label.setText(str(stats['images']))
-    
-    def _calculate_file_stats(self, items):
-        """Calculate file statistics"""
-        stats = {
-            'total_files': 0,
-            'included_files': 0,
-            'total_size': 0,
-            'web_files': 0,
-            'images': 0
-        }
-        
-        def count_recursive(items_list):
-            for item in items_list:
-                if item['type'] == 'file':
-                    stats['total_files'] += 1
-                    stats['total_size'] += item['size']
+            results = {
+                'total_tests': 0,
+                'blocked': 0,
+                'allowed': 0,
+                'details': [],
+                'by_category': {}
+            }
+            
+            for category, payloads in test_payloads.items():
+                if self.should_stop:
+                    break
                     
-                    if item['included']:
-                        stats['included_files'] += 1
+                category_results = {'blocked': 0, 'allowed': 0, 'total': len(payloads)}
+                
+                for payload in payloads:
+                    if self.should_stop:
+                        break
                     
-                    if item['category'] == 'web':
-                        stats['web_files'] += 1
-                    elif item['category'] == 'images':
-                        stats['images'] += 1
-                        
-                elif 'children' in item:
-                    count_recursive(item['children'])
+                    # Test payload against WAF rules
+                    blocked, reason = self._test_payload(payload, category)
+                    
+                    results['total_tests'] += 1
+                    if blocked:
+                        results['blocked'] += 1
+                        category_results['blocked'] += 1
+                        status = "BLOCKED"
+                        details = f"Blocked by rule: {reason}"
+                    else:
+                        results['allowed'] += 1
+                        category_results['allowed'] += 1
+                        status = "ALLOWED"
+                        details = "Payload not detected"
+                    
+                    self.test_updated.emit(category, payload[:50], blocked, details)
+                    
+                    results['details'].append({
+                        'category': category,
+                        'payload': payload,
+                        'blocked': blocked,
+                        'reason': reason
+                    })
+                    
+                    self.msleep(100)  # Small delay between tests
+                
+                results['by_category'][category] = category_results
+            
+            self.test_completed.emit(results)
         
-        count_recursive(items)
-        return stats
+        def _test_payload(self, payload, category):
+            """Test a payload against WAF rules"""
+            try:
+                # Check against WAF rules
+                for rule in ENTERPRISE_WAF_RULES:
+                    if rule.get('type') == category:
+                        if re.search(rule["pattern"], payload, re.IGNORECASE):
+                            # Record WAF hit
+                            if hasattr(self.security_manager, 'waf_hits'):
+                                self.security_manager.waf_hits[category] += 1
+                            return True, f"{rule['type']} (severity: {rule.get('severity', 'medium')})"
+                
+                return False, "No rule matched"
+            except Exception as e:
+                return False, f"Error: {str(e)}"
+        
+        def stop(self):
+            """Stop the WAF test"""
+            self.should_stop = True
 
-    def _calculate_threat_level(self, incidents, events) -> str:
-        """Calculate current threat level"""
-        critical_incidents = len([i for i in incidents if i.severity == IncidentSeverity.CRITICAL and i.status == IncidentStatus.OPEN])
-        high_events = len([e for e in events if e.severity == "high"])
-        
-        if critical_incidents > 0:
-            return "CRITICAL"
-        elif high_events > 5:
-            return "HIGH"
-        elif high_events > 2:
-            return "MEDIUM"
-        else:
-            return "LOW"
-    
-    def _update_threat_level_display(self, level):
-        """Update threat level display"""
-        colors = {
-            "LOW": "#8b5cf6",
-            "MEDIUM": "#d946ef", 
-            "HIGH": "#ec4899",
-            "CRITICAL": "#be185d"
-        }
-        
-        icons = {
-            "LOW": "🟢",
-            "MEDIUM": "🟡",
-            "HIGH": "🟠", 
-            "CRITICAL": "🔴"
-        }
-        
-        if hasattr(self, 'threat_level_label'):
-            self.threat_level_label.setText(f"{icons[level]} THREAT LEVEL: {level}")
-            self.threat_level_label.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors[level]};")
-        
     def init_ui(self):
         """Initialize the professional enterprise GUI"""
         self.setWindowTitle(f"SecureWebHost Enterprise v{VERSION} - Secure Hosting, Made Easy!")
@@ -3053,6 +3483,210 @@ Files:
         layout.addWidget(stats_group)
         
         return widget
+    
+    # Helper methods
+    def _create_metric_card(self, name, value, color, description):
+        """Create a professional metric card with squared rounded corners"""
+        widget = QtWidgets.QFrame()
+        
+        # Professional color scheme
+        professional_colors = {
+            "#ef4444": "#ec4899",  # Pink shade
+            "#f59e0b": "#d946ef",  # Purple shade
+            "#10b981": "#8b5cf6",  # Purple
+            "#0ea5e9": "#a855f7",  # Light purple
+            "#8b5cf6": "#8b5cf6",  # Purple
+            "#14b8a6": "#c084fc",  # Light purple
+            "#dc2626": "#ec4899",  # Pink
+            "#34d399": "#a855f7",  # Light purple
+        }
+        
+        final_color = professional_colors.get(color, color)
+        
+        widget.setStyleSheet(f"""
+            QFrame {{
+                background-color: #ffffff;
+                border: 2px solid {final_color};
+                border-radius: 12px;
+                padding: 20px;
+                margin: 8px;
+            }}
+            QFrame:hover {{
+                border-color: #7c3aed;
+                background-color: #f8fafc;
+            }}
+        """)
+        widget.setToolTip(description)
+        
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Value with professional styling
+        value_label = QtWidgets.QLabel(value)
+        value_label.setStyleSheet(f"""
+            font-size: 28px; 
+            font-weight: 800; 
+            color: {final_color};
+            margin-bottom: 8px;
+        """)
+        value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(value_label)
+        
+        # Name label
+        name_label = QtWidgets.QLabel(name)
+        name_label.setStyleSheet("font-size: 12px; color: #374151; font-weight: 600;")
+        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(name_label)
+        
+        widget.value_label = value_label
+        return widget
+
+    def _create_security_indicator(self, name, status, color, description):
+        """Create professional security status indicator"""
+        widget = QtWidgets.QFrame()
+        
+        professional_colors = {
+            "#10b981": "#8b5cf6",  # Purple
+            "#f59e0b": "#d946ef",  # Purple shade
+            "#ef4444": "#ec4899",  # Pink
+            "#0ea5e9": "#a855f7",  # Light purple
+        }
+        
+        final_color = professional_colors.get(color, color)
+        
+        widget.setStyleSheet(f"""
+            QFrame {{
+                background-color: #ffffff;
+                border: 2px solid {final_color};
+                border-radius: 10px;
+                padding: 15px;
+                margin: 5px;
+            }}
+            QFrame:hover {{
+                background-color: #f8fafc;
+            }}
+        """)
+        widget.setToolTip(description)
+        
+        layout = QtWidgets.QVBoxLayout(widget)
+        
+        name_label = QtWidgets.QLabel(name)
+        name_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #2d2d2d;")
+        layout.addWidget(name_label)
+        
+        status_label = QtWidgets.QLabel(status)
+        status_label.setStyleSheet(f"font-size: 14px; font-weight: 800; color: {final_color};")
+        layout.addWidget(status_label)
+        
+        widget.status_label = status_label
+        return widget
+
+    def _populate_file_tree(self, items, parent=None):
+        """Populate file tree widget"""
+        if parent is None:
+            parent = self.file_tree.invisibleRootItem()
+        
+        for item in items:
+            tree_item = QtWidgets.QTreeWidgetItem(parent)
+            tree_item.setText(0, item['name'])
+            
+            if item['type'] == 'file':
+                tree_item.setText(1, f"{item['size']:,} bytes")
+                tree_item.setText(2, item['modified'].strftime('%Y-%m-%d %H:%M'))
+                
+                # Include/exclude checkbox
+                checkbox = QtWidgets.QCheckBox()
+                checkbox.setChecked(item['included'])
+                checkbox.stateChanged.connect(lambda state, path=item['path']: 
+                    self.file_manager.include_file(path) if state else self.file_manager.exclude_file(path))
+                self.file_tree.setItemWidget(tree_item, 3, checkbox)
+                
+                # Set icon based on file type
+                if item['extension'] in ['.html', '.css', '.js']:
+                    tree_item.setIcon(0, self.style().standardIcon(QStyle.SP_FileIcon))
+                elif item['extension'] in ['.jpg', '.png', '.gif']:
+                    tree_item.setIcon(0, self.style().standardIcon(QStyle.SP_DesktopIcon))
+            else:
+                tree_item.setIcon(0, self.style().standardIcon(QStyle.SP_DirIcon))
+                if 'children' in item:
+                    self._populate_file_tree(item['children'], tree_item)
+
+    def _update_file_statistics(self):
+        """Update file statistics"""
+        file_data = self.file_manager.scan_directory()
+        stats = self._calculate_file_stats(file_data['items'])
+        
+        if hasattr(self, 'file_stats'):
+            self.file_stats["Total Files"].value_label.setText(str(stats['total_files']))
+            self.file_stats["Included Files"].value_label.setText(str(stats['included_files']))
+            self.file_stats["Total Size"].value_label.setText(f"{stats['total_size']:,} B")
+            self.file_stats["Web Files"].value_label.setText(str(stats['web_files']))
+            self.file_stats["Images"].value_label.setText(str(stats['images']))
+    
+    def _calculate_file_stats(self, items):
+        """Calculate file statistics"""
+        stats = {
+            'total_files': 0,
+            'included_files': 0,
+            'total_size': 0,
+            'web_files': 0,
+            'images': 0
+        }
+        
+        def count_recursive(items_list):
+            for item in items_list:
+                if item['type'] == 'file':
+                    stats['total_files'] += 1
+                    stats['total_size'] += item['size']
+                    
+                    if item['included']:
+                        stats['included_files'] += 1
+                    
+                    if item['category'] == 'web':
+                        stats['web_files'] += 1
+                    elif item['category'] == 'images':
+                        stats['images'] += 1
+                        
+                elif 'children' in item:
+                    count_recursive(item['children'])
+        
+        count_recursive(items)
+        return stats
+
+    def _calculate_threat_level(self, incidents, events) -> str:
+        """Calculate current threat level"""
+        critical_incidents = len([i for i in incidents if i.severity == IncidentSeverity.CRITICAL and i.status == IncidentStatus.OPEN])
+        high_events = len([e for e in events if e.severity == "high"])
+        
+        if critical_incidents > 0:
+            return "CRITICAL"
+        elif high_events > 5:
+            return "HIGH"
+        elif high_events > 2:
+            return "MEDIUM"
+        else:
+            return "LOW"
+    
+    def _update_threat_level_display(self, level):
+        """Update threat level display"""
+        colors = {
+            "LOW": "#8b5cf6",
+            "MEDIUM": "#d946ef", 
+            "HIGH": "#ec4899",
+            "CRITICAL": "#be185d"
+        }
+        
+        icons = {
+            "LOW": "🟢",
+            "MEDIUM": "🟡",
+            "HIGH": "🟠", 
+            "CRITICAL": "🔴"
+        }
+        
+        if hasattr(self, 'threat_level_label'):
+            self.threat_level_label.setText(f"{icons[level]} THREAT LEVEL: {level}")
+            self.threat_level_label.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {colors[level]};")
+        
 
     # Timer and update methods
     def init_timers(self):
@@ -3169,6 +3803,281 @@ Files:
             
         except Exception as e:
             pass
+    
+    def update_threat_intelligence(self):
+        """Update threat intelligence feeds"""
+        progress = QtWidgets.QProgressDialog("Updating threat intelligence...", None, 0, 100, self)
+        progress.setWindowTitle("Intelligence Update")
+        progress.setWindowModality(Qt.WindowModal)
+        
+        for i in range(101):
+            progress.setValue(i)
+            time.sleep(0.02)
+        
+        progress.close()
+        self.show_message_box("Update Complete", "Threat intelligence feeds updated successfully!")
+
+class WAFTestResultsDialog(QtWidgets.QDialog):
+    """Dialog to show detailed WAF test results"""
+    
+    def __init__(self, results, parent=None):
+        super().__init__(parent)
+        self.results = results
+        self.init_ui2()
+    
+    def init_ui2(self):
+        """Initialize the dialog UI"""
+        self.setWindowTitle("WAF Test Results")
+        self.setModal(True)
+        self.resize(800, 600)
+        
+        layout = QtWidgets.QVBoxLayout(self)
+        
+        # Header with summary
+        header = QtWidgets.QLabel("🛡️ WAF Rule Test Results")
+        header.setStyleSheet("font-size: 18px; font-weight: 700; color: #8b5cf6; padding: 10px;")
+        layout.addWidget(header)
+        
+        # Summary stats
+        summary_layout = QtWidgets.QHBoxLayout()
+        
+        total_tests = self.results['total_tests']
+        blocked = self.results['blocked']
+        allowed = self.results['allowed']
+        success_rate = (blocked / total_tests * 100) if total_tests > 0 else 0
+        
+        stats = [
+            ("Total Tests", str(total_tests), "#8b5cf6"),
+            ("Blocked", str(blocked), "#10b981"),
+            ("Allowed", str(allowed), "#ef4444"),
+            ("Success Rate", f"{success_rate:.1f}%", "#8b5cf6")
+        ]
+        
+        for name, value, color in stats:
+            stat_widget = QtWidgets.QFrame()
+            stat_widget.setStyleSheet(f"""
+                QFrame {{
+                    background-color: #ffffff;
+                    border: 2px solid {color};
+                    border-radius: 8px;
+                    padding: 15px;
+                    margin: 5px;
+                }}
+            """)
+            
+            stat_layout = QtWidgets.QVBoxLayout(stat_widget)
+            value_label = QtWidgets.QLabel(value)
+            value_label.setStyleSheet(f"font-size: 24px; font-weight: 800; color: {color};")
+            value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            stat_layout.addWidget(value_label)
+            
+            name_label = QtWidgets.QLabel(name)
+            name_label.setStyleSheet("font-size: 12px; color: #374151; font-weight: 600;")
+            name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            stat_layout.addWidget(name_label)
+            
+            summary_layout.addWidget(stat_widget)
+        
+        layout.addLayout(summary_layout)
+        
+        # Category breakdown
+        category_group = QtWidgets.QGroupBox("📊 Results by Category")
+        category_layout = QtWidgets.QVBoxLayout(category_group)
+        
+        category_table = QtWidgets.QTableWidget()
+        category_table.setColumnCount(4)
+        category_table.setHorizontalHeaderLabels(["Category", "Total", "Blocked", "Success Rate"])
+        
+        categories = self.results.get('by_category', {})
+        category_table.setRowCount(len(categories))
+        
+        for i, (category, stats) in enumerate(categories.items()):
+            category_table.setItem(i, 0, QTableWidgetItem(category.replace('_', ' ').title()))
+            category_table.setItem(i, 1, QTableWidgetItem(str(stats['total'])))
+            category_table.setItem(i, 2, QTableWidgetItem(str(stats['blocked'])))
+            
+            success_rate = (stats['blocked'] / stats['total'] * 100) if stats['total'] > 0 else 0
+            rate_item = QTableWidgetItem(f"{success_rate:.1f}%")
+            
+            if success_rate >= 90:
+                rate_item.setForeground(QColor("#10b981"))
+            elif success_rate >= 70:
+                rate_item.setForeground(QColor("#f59e0b"))
+            else:
+                rate_item.setForeground(QColor("#ef4444"))
+            
+            category_table.setItem(i, 3, rate_item)
+        
+        category_layout.addWidget(category_table)
+        layout.addWidget(category_group)
+        
+        # Detailed results
+        details_group = QtWidgets.QGroupBox("📋 Detailed Test Results")
+        details_layout = QtWidgets.QVBoxLayout(details_group)
+        
+        self.details_table = QtWidgets.QTableWidget()
+        self.details_table.setColumnCount(4)
+        self.details_table.setHorizontalHeaderLabels(["Category", "Payload", "Status", "Details"])
+        
+        details = self.results.get('details', [])
+        self.details_table.setRowCount(len(details))
+        
+        for i, detail in enumerate(details):
+            self.details_table.setItem(i, 0, QTableWidgetItem(detail['category'].replace('_', ' ').title()))
+            
+            payload = detail['payload']
+            if len(payload) > 50:
+                payload = payload[:47] + "..."
+            self.details_table.setItem(i, 1, QTableWidgetItem(payload))
+            
+            status = "BLOCKED" if detail['blocked'] else "ALLOWED"
+            status_item = QTableWidgetItem(status)
+            
+            if detail['blocked']:
+                status_item.setForeground(QColor("#10b981"))
+            else:
+                status_item.setForeground(QColor("#ef4444"))
+            
+            self.details_table.setItem(i, 2, status_item)
+            self.details_table.setItem(i, 3, QTableWidgetItem(detail['reason']))
+        
+        details_layout.addWidget(self.details_table)
+        layout.addWidget(details_group)
+        
+        # Buttons
+        button_layout = QtWidgets.QHBoxLayout()
+        
+        export_btn = QtWidgets.QPushButton("📄 Export Results")
+        export_btn.clicked.connect(self.export_results)
+        button_layout.addWidget(export_btn)
+        
+        button_layout.addStretch()
+        
+        close_btn = QtWidgets.QPushButton("✅ Close")
+        close_btn.clicked.connect(self.accept)
+        button_layout.addWidget(close_btn)
+        
+        layout.addLayout(button_layout)
+    
+    def export_results(self):
+        """Export WAF test results"""
+        try:
+            file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, "Export WAF Test Results", 
+                f"waf_test_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt", 
+                "Text Files (*.txt);;All Files (*)"
+            )
+            
+            if file_path:
+                report = f"""WAF Rule Test Results
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+SUMMARY
+=======
+Total Tests: {self.results['total_tests']}
+Blocked: {self.results['blocked']}
+Allowed: {self.results['allowed']}
+Success Rate: {(self.results['blocked'] / self.results['total_tests'] * 100):.1f}%
+
+CATEGORY BREAKDOWN
+=================="""
+                
+                for category, stats in self.results.get('by_category', {}).items():
+                    success_rate = (stats['blocked'] / stats['total'] * 100) if stats['total'] > 0 else 0
+                    report += f"\n{category.replace('_', ' ').title()}: {stats['blocked']}/{stats['total']} ({success_rate:.1f}%)"
+                
+                report += f"\n\nDETAILED RESULTS\n================\n"
+                
+                for detail in self.results.get('details', []):
+                    status = "BLOCKED" if detail['blocked'] else "ALLOWED"
+                    report += f"\n[{detail['category'].upper()}] {status}: {detail['payload'][:100]}\n  Reason: {detail['reason']}\n"
+                
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(report)
+                
+                QtWidgets.QMessageBox.information(self, "Export Complete", f"Results exported to:\n{file_path}")
+        
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Export Error", f"Failed to export results: {str(e)}")
+
+    def test_waf_rules(self):
+        """Test WAF rules with real attack payloads"""
+        reply = QtWidgets.QMessageBox.question(
+            self, "WAF Rule Test", 
+            "This will test WAF rules against real attack payloads.\n\n"
+            "The test will simulate SQL injection, XSS, path traversal, and other attacks.\n"
+            "This is safe and will only test the detection capabilities.\n\n"
+            "Continue with WAF testing?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+        )
+        
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        
+        # Create WAF test worker
+        self.waf_test_worker = WAFTestWorker(self.security_manager)
+        self.waf_test_worker.test_updated.connect(self.update_waf_test_progress)
+        self.waf_test_worker.test_completed.connect(self.waf_test_completed)
+        
+        # Show progress dialog
+        self.waf_test_progress = QtWidgets.QProgressDialog("Initializing WAF tests...", "Cancel", 0, 100, self)
+        self.waf_test_progress.setWindowTitle("WAF Rule Testing")
+        self.waf_test_progress.setWindowModality(Qt.WindowModal)
+        self.waf_test_progress.canceled.connect(self.cancel_waf_test)
+        self.waf_test_progress.show()
+        
+        # Start the test
+        self.waf_test_worker.start()
+
+    def update_waf_test_progress(self, category, payload, blocked, details):
+        """Update WAF test progress"""
+        if hasattr(self, 'waf_test_progress'):
+            status = "BLOCKED" if blocked else "ALLOWED"
+            message = f"Testing {category}: {status}\n{payload[:50]}..."
+            
+            # Update progress (estimate based on current test)
+            current_value = self.waf_test_progress.value()
+            self.waf_test_progress.setValue(min(95, current_value + 3))
+            self.waf_test_progress.setLabelText(message)
+
+    def waf_test_completed(self, results):
+        """Handle WAF test completion"""
+        if hasattr(self, 'waf_test_progress'):
+            self.waf_test_progress.setValue(100)
+            self.waf_test_progress.close()
+        
+        # Show detailed results dialog
+        results_dialog = WAFTestResultsDialog(results, self)
+        results_dialog.exec()
+        
+        # Update WAF statistics display
+        self.update_slow_data()
+        
+        # Show summary message
+        blocked = results['blocked']
+        total = results['total_tests']
+        success_rate = (blocked / total * 100) if total > 0 else 0
+        
+        if success_rate >= 90:
+            icon = QtWidgets.QMessageBox.Information
+            title = "WAF Test: Excellent Protection"
+            message = f"🛡️ WAF performed excellently!\n\n✅ Blocked: {blocked}/{total} attacks ({success_rate:.1f}%)\n\nYour WAF rules are providing strong protection against common attacks."
+        elif success_rate >= 70:
+            icon = QtWidgets.QMessageBox.Warning
+            title = "WAF Test: Good Protection"
+            message = f"🟡 WAF performed well but could be improved.\n\n⚠️  Blocked: {blocked}/{total} attacks ({success_rate:.1f}%)\n\nConsider reviewing and updating WAF rules for better protection."
+        else:
+            icon = QtWidgets.QMessageBox.Critical
+            title = "WAF Test: Needs Improvement"
+            message = f"🔴 WAF needs significant improvement!\n\n❌ Blocked: {blocked}/{total} attacks ({success_rate:.1f}%)\n\nUrgently review WAF configuration and rules."
+        
+        self.show_message_box(title, message, icon)
+
+    def cancel_waf_test(self):
+        """Cancel WAF test"""
+        if hasattr(self, 'waf_test_worker'):
+            self.waf_test_worker.stop()
+
 
 # Worker thread for security scan (Fixed to prevent crashes)
 class SecurityScanWorker(QThread):
