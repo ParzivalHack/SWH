@@ -2,7 +2,7 @@
 """
 SecureWebHost Enterprise Edition - Professional secure web hosting server
 Enhanced with Enterprise GUI and One-Click Production Deployment
-Version 3.0.1 - Professional Enterprise Edition (Fixed)
+Version 3.0.1 - Professional Enterprise Edition
 """
 
 import os
