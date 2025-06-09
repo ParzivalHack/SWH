@@ -53,7 +53,7 @@ Turn any folder into a production-ready secure website in 30 seconds
 - *Vercel integration* (real API v13 implementation)
 - *Netlify deployment* with ZIP uploads
 - *GitHub Pages* with automated git operations
-- *Custom domains* via Cloudflare Tunnel (no port forwarding!)
+- *VPS deployment* via the GUI's Cloudflare Tunnel Tab (no port forwarding!)
 
 ### 📊 *Professional Monitoring*
 - *Real-time performance metrics* (response time, throughput, errors)
