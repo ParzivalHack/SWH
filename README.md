@@ -26,7 +26,7 @@ Turn any folder into a production-ready secure website in 30 seconds
 
 | *Before* 😫 | *After* 🚀 |
 |---|---|
-| Configure nginx + SSL + firewall + monitoring | ✅ One command: python securewebhost.py --gui |
+| Configure nginx + SSL + firewall + monitoring | ✅ One command: python swh.py --gui |
 | Setup WAF rules manually | ✅ 150+ pre-configured enterprise WAF rules (+ the possibility to add more)|
 | Deploy via complex CI/CD pipelines | ✅ One-click deploy to Vercel/Netlify/GitHub Pages (+ easy VPS deployment with CF)|
 | Monitor with expensive tools | ✅ Real-time security & performance analytics |
