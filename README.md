@@ -108,6 +108,7 @@ python securewebhost.py --gui
 ```
 
 ### 🌐 Instant Public Access (Testing)
+
 ```bash 
 # Create a temporary public NGROK URL (for testing only)
 python securewebhost.py --gui --expose
@@ -129,16 +130,18 @@ python securewebhost.py --gui --expose
 
 <details>
 <summary>🐍 Python Installation</summary>
-```bash
-#### Option 1: From Source
  
+#### Option 1: From Source
+ ```bash
 git clone https://github.com/ParzivalHack/SWH
 cd SWH
 pip install -r requirements.txt
 python swh.py --gui
+
 ```
 
 #### Option 2: Standalone Executable (Work in progress...)
+
 Download from [Releases](https://github.com/ParzivalHack/SWH/releases)
 
 </details>
@@ -149,25 +152,26 @@ Download from [Releases](https://github.com/ParzivalHack/SWH/releases)
 <summary>🚀 Deployment Configuration</summary>
 
 #### Vercel Setup
+ ```bash 
  
 # 1. Get API token from vercel.com/account/tokens
 # 2. In SecureWebHost GUI: Deployment → Vercel → Enter token
 # 3. Click "Deploy to Production"
-
+ ```
 
 #### Netlify Setup  
- 
+ ```bash 
 # 1. Get API token from app.netlify.com/user/applications
 # 2. In SecureWebHost GUI: Deployment → Netlify → Enter token
 # 3. Click "Deploy to Production"
-
+ ```
 
 #### GitHub Pages Setup
- 
+ ```bash 
 # 1. Create Personal Access Token with 'repo' and 'workflow' scope
 # 2. In SecureWebHost GUI: Deployment → GitHub Pages
 # 3. Enter token + repository URL → Deploy
-
+ ```
 
 </details>
 
@@ -178,11 +182,12 @@ Download from [Releases](https://github.com/ParzivalHack/SWH/releases)
 
  
 # Host in 1 click, your business website with enterprise security
+ ```bash
 python securewebhost.py --gui --root ./website --port 443 (P.s. you can do it directly from the Cloudflare Production Tunnel tab!)
 # → Automatic SSL, WAF protection, performance monitoring, 
 # → One-click deploy to global CDN
 # → Professional security reports
-
+ ```
 
 </details>
 
@@ -191,10 +196,12 @@ python securewebhost.py --gui --root ./website --port 443 (P.s. you can do it di
 
  
 # Local development with production-grade security
+ ```bash
 python securewebhost.py --gui --root ./my-app --expose
 # → Test security features locally
 # → Share secure preview links and access your site remotely via NGROK
 # → Simulate real-world attacks safely
+ ```
 </details>
 
 ## 🛡 Security Features Deep Dive
