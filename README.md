@@ -9,7 +9,7 @@ Turn any folder into a production-ready secure website in 30 seconds
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/yourusername/securewebhost)
-[![Stars](https://img.shields.io/github/stars/yourusername/securewebhost?style=social)](https://github.com/yourusername/securewebhost/stargazers)
+[![Stars](https://img.shields.io/github/stars/ParzivalHack/SWH?style=social)](https://github.com/ParzivalHack/SWH/stargazers)
 
 [🚀 Quick Start](#-quick-start) • [📖 Documentation](#-documentation) • [🎥 Demo](#-demo) • [💬 Community](#-community)
 
