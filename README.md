@@ -73,16 +73,17 @@ Turn any folder into a production-ready secure website in 30 seconds
 <summary>🖼 View Screenshots</summary>
 
 #### Dashboard Overview
-![Dashboard](docs/images/dashboard.png)
+![Dashboard](https://github.com/user-attachments/assets/e288b7f8-8ca0-4f9e-9128-527f41e73f41)
 
 #### Security Center
-![Security](docs/images/security-center.png)
+![Security](https://github.com/user-attachments/assets/75fc9efc-59db-4bb2-8a41-56f83e47848c)
 
-#### Deployment Interface
+#### Deployment Interfaces
 ![Deployment](docs/images/deployment.png)
 
 #### Performance Analytics
-![Analytics](docs/images/analytics.png)
+![Analytics](https://github.com/user-attachments/assets/125b8e5b-3e34-4835-a617-c0d9954f245e)
+
 
 </details>
 
