@@ -70,10 +70,14 @@ Turn any folder into a production-ready secure website in 30 seconds
 ### 📸 Screenshots
 
 <details>
-<summary>🖼 View Screenshots</summary>
+<summary>🖼 View Key Screenshots</summary>
 
 #### Dashboard Overview
 ![Dashboard](https://github.com/user-attachments/assets/e288b7f8-8ca0-4f9e-9128-527f41e73f41)
+
+#### File Management 
+
+![File Management](https://github.com/user-attachments/assets/41815970-2423-489d-9424-d0d8d3a8d098)
 
 #### Security Center
 ![Security](https://github.com/user-attachments/assets/75fc9efc-59db-4bb2-8a41-56f83e47848c)
