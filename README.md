@@ -98,12 +98,12 @@ Turn any folder into a production-ready secure website in 30 seconds
 
 ```bash 
 # 1. Clone & install
-git clone https://github.com/yourusername/securewebhost.git
-cd securewebhost
+git clone https://github.com/ParzivalHack/SWH
+cd SWH
 pip install -r requirements.txt
 
 # 2. Launch with GUI
-python securewebhost.py --gui
+python swh.py --gui
 
 # 3. Point to your website folder and click "Include all" (or "Refresh" if you wanna choose which files/folders to include)
 # 4. Deploy to production with one click!
@@ -113,7 +113,7 @@ python securewebhost.py --gui
 
 ```bash 
 # Create a temporary public NGROK URL (for testing only)
-python securewebhost.py --gui --expose
+python swh.py --gui --expose
 ```
 
 ## 📖 Documentation
