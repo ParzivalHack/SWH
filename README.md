@@ -37,7 +37,7 @@ Turn any folder into a production-ready secure website in 30 seconds
 - 🏢 *Small businesses* needing enterprise security without complexity
 - 👨‍💻 *Developers* wanting secure local development & easy client-side deployment  
 - 🎓 *Students & educators* learning web security hands-on
-- 🏠 *Self-hosters and WebDevs* running secure portfolio websites or using SecureWebHost to host their own
+- 🏠 *Self-hosters and WebDevs* running secure portfolio websites or using SecureWebHost to host their own websites
 - 🔐 *Security professionals* needing quick secure web environments
 
 ## ✨ Features That Set Us Apart
