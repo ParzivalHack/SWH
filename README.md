@@ -13,7 +13,7 @@ Turn any folder into a production-ready secure website in 30 seconds
 
 [🚀 Quick Start](#-quick-start) • [📖 Documentation](#-documentation) • [🎥 Demo](#-demo) • [💬 Community](#-community)
 
-![SecureWebHost Demo](![image](https://github.com/user-attachments/assets/6ed0472d-58b2-45d1-90ea-c51fcaa7fc3e))
+![SecureWebHost Demo](![image](https://github.com/user-attachments/assets/6ed0472d-58b2-45d1-90ea-c51fcaa7fc3e)
 
 </div>
 
@@ -94,7 +94,7 @@ Turn any folder into a production-ready secure website in 30 seconds
 
 ### ⚡ 30-Second Setup
 
-``` 
+```bash 
 # 1. Clone & install
 git clone https://github.com/yourusername/securewebhost.git
 cd securewebhost
