@@ -11,7 +11,7 @@ Turn any folder into a production-ready secure website in 30 seconds
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/yourusername/securewebhost)
 [![Stars](https://img.shields.io/github/stars/ParzivalHack/SWH?style=social)](https://github.com/ParzivalHack/SWH/stargazers)
 
-[🚀 Quick Start](#-quick-start) • [📖 Documentation](#-documentation) • [🎥 Live Website (Hosted with SWH)](https://parzivalhack.github.io/SWH/) • [💬 Community](#-community)
+[🚀 Quick Start](#-quick-start) • [📖 Documentation](#-documentation) • [🎥 Live Website (hosted with SWH)](https://parzivalhack.github.io/SWH/) • [💬 Community](#-community)
 
 ![image](https://github.com/user-attachments/assets/ae2afbd9-3124-4aac-9feb-0ee16b35b6be)
 
