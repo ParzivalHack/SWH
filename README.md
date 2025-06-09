@@ -217,11 +217,11 @@ SecureWebHost includes *150+ enterprise-grade WAF rules* protecting against:
 - *Command Injections* (10 specialized rules)
 - *OWASP Top 10* vulnerabilities
 
-#### 🧪 Test Your WAF
+### 🧪 Test Your WAF
  
-# Built-in WAF testing with real attack payloads
-# GUI: Security Center → WAF Management → Test WAF
-# Tests 50+ real attack patterns safely
+-  Built-in WAF testing with real attack payloads
+- GUI: Security Center → WAF Management → Test WAF
+- Tests 50+ real attack patterns safely
 
 
 ### 🍯 Intelligent Honeypots
