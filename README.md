@@ -13,7 +13,7 @@ Turn any folder into a production-ready secure website in 30 seconds
 
 [🚀 Quick Start](#-quick-start) • [📖 Documentation](#-documentation) • [🎥 Demo](#-demo) • [💬 Community](#-community)
 
-![SecureWebHost Demo](![image](https://github.com/user-attachments/assets/6ed0472d-58b2-45d1-90ea-c51fcaa7fc3e)
+https://github.com/user-attachments/assets/6ed0472d-58b2-45d1-90ea-c51fcaa7fc3e
 
 </div>
 
@@ -108,7 +108,7 @@ python securewebhost.py --gui
 ```
 
 ### 🌐 Instant Public Access (Testing)
-``` 
+```bash 
 # Create a temporary public NGROK URL (for testing only)
 python securewebhost.py --gui --expose
 ```
@@ -129,14 +129,14 @@ python securewebhost.py --gui --expose
 
 <details>
 <summary>🐍 Python Installation</summary>
-
+```bash
 #### Option 1: From Source
  
 git clone https://github.com/ParzivalHack/SWH
 cd SWH
 pip install -r requirements.txt
 python swh.py --gui
-
+```
 
 #### Option 2: Standalone Executable (Work in progress...)
 Download from [Releases](https://github.com/ParzivalHack/SWH/releases)
