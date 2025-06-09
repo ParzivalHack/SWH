@@ -13,7 +13,8 @@ Turn any folder into a production-ready secure website in 30 seconds
 
 [🚀 Quick Start](#-quick-start) • [📖 Documentation](#-documentation) • [🎥 Demo](#-demo) • [💬 Community](#-community)
 
-https://github.com/user-attachments/assets/6ed0472d-58b2-45d1-90ea-c51fcaa7fc3e
+![image](https://github.com/user-attachments/assets/ae2afbd9-3124-4aac-9feb-0ee16b35b6be)
+
 
 </div>
 
