@@ -260,9 +260,9 @@ SecureWebHost includes *150+ enterprise-grade WAF rules* protecting against:
 ### 🔬 Built-In Benchmarking
 
  
-# GUI: Performance → Run Benchmark
-# Tests: Response time, memory usage, CPU efficiency, security score
-# Generates professional easily parsable reports
+- GUI: Performance → Run Benchmark
+- Tests: Response time, memory usage, CPU efficiency, security score
+- Generates professional easily parsable reports
 
 
 ### 📊 Load Testing
@@ -381,10 +381,8 @@ SecureWebHost Enterprise is released under the [MIT License](LICENSE).
 
 <div align="center">
 
-### Built with ❤️ by [Tommaso Bona](https://linkedin.com/in/tommaso-bona)
+*Built with ❤️ by [Tommaso Bona](https://linkedin.com/in/tommaso-bona)*
 
-*Made with ❤ by the SecureWebHost Community*
-
-[⭐ Star us on GitHub](https://github.com/yourusername/securewebhost) • [🔔 Watch for updates](https://github.com/yourusername/securewebhost/subscription) • [🍴 Fork the project](https://github.com/yourusername/securewebhost/fork)
+[⭐ Star us on GitHub](https://github.com/ParzivalHack/SWH) • [🔔 Watch for updates](https://github.com/ParzivalHack/SWH/subscription) • [🍴 Fork the project](https://github.com/ParzivalHack/SWH/fork)
 
 </div>
